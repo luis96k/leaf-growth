@@ -1,0 +1,489 @@
+================================================================================
+  CELL GROWTH SIMULATOR — .gro FILE FORMAT (v3.0)
+================================================================================
+
+TABLE OF CONTENTS
+─────────────────
+  1. Quick Start
+  2. Core Concepts
+  3. File Structure
+  4. Sections Reference
+     4.1 GRADIENTS
+     4.2 CELLS
+     4.3 DIVIDE
+     4.4 DIFFERENTIATE
+     4.5 DIE
+  5. Condition Language
+  6. Axis Specification
+  7. Common Patterns & Tips
+
+
+================================================================================
+1. QUICK START
+================================================================================
+
+A minimal .gro file:
+
+    CELLS:
+      cell: #44cc44 initial
+
+    DIVIDE:
+      cell -> cell, cell:
+        when age >= 2 AND neighbors < 6
+        axis = random
+        limit = 10
+
+This creates a single green cell that divides every 2 steps until the
+tissue reaches ~10 generations, spreading in random directions.
+
+
+================================================================================
+2. CORE CONCEPTS
+================================================================================
+
+CELL        A circular body with position, type, age, facing direction,
+            and division count. One cell is the ANCHOR (pinned at origin).
+
+GRADIENT    A scalar field (0–1) over space. Cells read gradient values
+            at their position to make decisions. Two kinds:
+              • Static: defined in GRADIENTS section, centered at origin
+              • Emitted: dropped by cells via `emit`, fixed where dropped
+
+FACING      Each cell has a direction it "faces" (inherited from division).
+            The initial cell faces 90° (North). Daughter cells face along
+            their birth direction.
+
+SIMULATION STEP (in order):
+  1. Age all cells (+1)
+  2. Apply death rules (cells removed)
+  3. Apply differentiation rules (type changes in-place)
+  4. Apply division rules (cell splits into two daughters)
+  5. Physics settles overlapping cells
+
+COORDINATES
+              90° (North/+Y)
+                   │
+    180° (West) ───┼─── 0° (East/+X)
+                   │
+              270° (South)
+
+
+================================================================================
+3. FILE STRUCTURE
+================================================================================
+
+• Four optional sections: GRADIENTS, CELLS, DIVIDE, DIFFERENTIATE, DIE
+• Sections can appear in any order
+• Section headers have NO indentation and end with `:`
+• Section content MUST be indented (at least one space/tab)
+• Comments start with `#` (except `#RRGGBB` hex colors)
+• Blank lines are ignored
+
+
+================================================================================
+4. SECTIONS REFERENCE
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+4.1 GRADIENTS
+────────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+    NAME: TYPE [angle=DEGREES] [scale=NUMBER]
+
+Types:
+    r-    Radial decreasing: 1 at center, fades outward
+    r+    Radial increasing: 0 at center, rises outward
+    l     Asymmetric linear: 0→1 along axis direction
+    l-    Symmetric linear decreasing: 1 on axis, fades both sides
+    l+    Symmetric linear increasing: 0 on axis, rises both sides
+
+• `scale` controls steepness (default 1.0; higher = sharper falloff)
+• `angle` sets axis direction for linear types (default 0°)
+
+Example:
+    GRADIENTS:
+      auxin:  r- scale=0.3
+      light:  l  angle=90 scale=0.2
+      center: r+ scale=0.25
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.2 CELLS
+────────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+    NAME: #RRGGBB [initial]
+
+• `initial` marks the starting cell type (one cell created at origin)
+• If no `initial`, a cell of type "default" is created
+
+Example:
+    CELLS:
+      stem:   #44aa44 initial
+      leaf:   #88cc66
+      flower: #ff88aa
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.3 DIVIDE
+────────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+    PARENT -> DAUGHTER1, DAUGHTER2:
+      when CONDITION
+      axis = AXIS_SPEC
+      emit NAME [scale=N]
+      priority = N
+      limit = N
+
+• `when` — boolean condition (see Section 5). Omit = always applies.
+• `axis` — division direction (see Section 6). Default: 0° (East).
+• `emit` — drop a radial gradient at daughter1's position. 
+           Readable via `NAME*` in conditions. Default scale=0.8.
+• `priority` — higher = checked first. Default: 0.
+• `limit` — max division_count for this rule. Default: 1000.
+
+Daughter1 is placed along the axis direction; daughter2 opposite.
+Daughters inherit division_count+1 and start with age=0.
+If parent was anchor, the daughter closer to origin becomes anchor.
+
+Example:
+    DIVIDE:
+      stem -> stem, leaf:
+        when (age >= 3) AND (auxin > 0.4)
+        axis = @auxin+90
+        priority = 5
+        limit = 12
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.4 DIFFERENTIATE
+────────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+    SOURCE -> TARGET:
+      when CONDITION
+      priority = N
+      reset_age = true/false
+      reset_divisions = true/false
+
+Differentiation transforms a cell's type IN PLACE (no division).
+Evaluated AFTER death, BEFORE division.
+
+• `reset_age` — if true, cell's age resets to 0. Default: false.
+• `reset_divisions` — if true, division_count resets. Default: false.
+
+Example:
+    DIFFERENTIATE:
+      stem -> mature:
+        when (age >= 5) AND (auxin < 0.3)
+        priority = 10
+
+      mature -> flowering:
+        when (neighbors < 4) AND (light > 0.6)
+        reset_age = true
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.5 DIE
+────────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+    CELLTYPE:
+      when CONDITION
+      priority = N
+
+If `when` is omitted, all cells of that type die immediately.
+
+Example:
+    DIE:
+      leaf:
+        when (age > 25) OR (neighbors == 0)
+
+
+================================================================================
+5. CONDITION LANGUAGE
+================================================================================
+
+Conditions are boolean expressions evaluated per cell at each step.
+
+They are built from:
+  • Comparison atoms (VARIABLE OP VALUE)
+  • Predicates (standalone boolean checks)
+  • Boolean operators: AND, OR, NOT
+  • Parentheses for grouping
+
+────────────────────────────────────────────────────────────────────────────────
+IMPORTANT: GROUP EXPRESSIONS WITH PARENTHESES
+────────────────────────────────────────────────────────────────────────────────
+
+The parser requires explicit grouping of boolean expressions.
+
+Each AND/OR operation must combine exactly two operands.
+
+    CORRECT:   when ((A AND B) OR C)
+    CORRECT:   when (A AND (B OR C))
+    WRONG:     when A AND B OR C
+
+When in doubt, add parentheses.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.1 COMPARISON ATOMS
+────────────────────────────────────────────────────────────────────────────────
+
+    VARIABLE OP VALUE
+
+Operators:
+    >   <   >=   <=   ==   !=
+
+Variables:
+
+    age
+        Steps since birth.
+        A new cell has age = 0 at creation.
+        Aging occurs before rule evaluation → age = 1 on first evaluation.
+
+    neighbors
+        Number of nearby cells within interaction distance.
+
+    neighbors(TYPE)
+        Number of nearby cells of a specific type.
+
+    GRADIENT
+        Value of a gradient at the cell's position (range 0–1).
+
+    GRADIENT*
+        Sum of all gradients starting with the prefix, clamped to 1.
+
+Examples:
+
+    age >= 3
+    neighbors < 6
+    neighbors(leaf) == 0
+    auxin > 0.5
+    hormone* < 0.3
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.2 SPECIAL PREDICATES
+────────────────────────────────────────────────────────────────────────────────
+
+Predicates evaluate directly to true/false (no operator required):
+
+    surrounded
+        True if the cell has neighbors on opposite sides (≥120° apart).
+
+    blocked(GRADIENT)
+        True if a neighbor exists in a ±45° cone toward gradient increase.
+
+    blocked(facing)
+        True if a neighbor exists in a ±45° cone of the cell's facing direction.
+
+    Random
+        50% probability of true (coin flip, evaluated each step).
+
+    Random(VALUE)
+        VALUE = probability of true (0–1).
+
+    Random(EXPRESSION)
+        Expression evaluated at the cell's position.
+        Result is clamped to [0,1] and used as probability.
+
+Expressions support:
+    • Numbers: 0.5, 1, 0.25
+    • Gradients: auxin, light, hormone*
+    • Special: age
+    • Arithmetic: +  -  *  /
+    • Parentheses for grouping
+
+Examples:
+
+    Random
+    Random(0.3)
+    Random(auxin)
+    Random(1 - auxin)
+    Random((light + auxin) / 2)
+
+Full condition example:
+
+    when (age >= 3) AND Random(auxin)
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.3 BOOLEAN OPERATORS
+────────────────────────────────────────────────────────────────────────────────
+
+    AND     Both conditions must be true
+    OR      At least one must be true
+    NOT     Negates the following condition
+
+Operators are case-insensitive:
+   AND = and = And
+
+================================================================================
+6. AXIS SPECIFICATION
+================================================================================
+
+The axis determines division direction (angle daughter1 is pushed).
+
+────────────────────────────────────────────────────────────────────────────────
+6.1 FIXED & RANDOM
+────────────────────────────────────────────────────────────────────────────────
+
+    90              Fixed angle (90° = North)
+    random          Random angle 0–360°
+
+────────────────────────────────────────────────────────────────────────────────
+6.2 GRADIENT-RELATIVE
+────────────────────────────────────────────────────────────────────────────────
+
+    @GRADIENT           Direction of gradient INCREASE at cell
+    @GRADIENT+N         Gradient direction + N degrees
+    @GRADIENT-N         Gradient direction - N degrees
+    @GRADIENT±N         Gradient direction ± N (random left or right fork)
+    @GRADIENT+N±M       Combined: offset N, then random ±M
+
+Examples:
+    @auxin              Divide toward higher auxin
+    @auxin+90           Divide perpendicular to auxin gradient
+    @light±30           Fork randomly 30° left or right of light direction
+
+NOTE: ± is Unicode U+00B1. Copy it from here if needed: ±
+
+────────────────────────────────────────────────────────────────────────────────
+6.3 FACING-RELATIVE
+────────────────────────────────────────────────────────────────────────────────
+
+    facing              Cell's current facing direction
+    facing+N            Facing + N degrees
+    facing-N            Facing - N degrees
+    facing±N            Facing with random ±N fork
+    facing@GRADIENT+N   Facing, bent toward gradient by up to N degrees per step
+
+The last form (`facing@GRADIENT+N`) is for phototropism-like behavior:
+the cell tries to turn toward the gradient but is limited to N degrees
+of bend per division.
+
+Examples:
+    facing              Continue straight
+    facing+90           Turn right each generation
+    facing±15           Slight random wobble
+    facing@light+25     Gradually curve toward light (max 25°/step)
+
+
+================================================================================
+7. COMMON PATTERNS & TIPS
+================================================================================
+
+ALWAYS USE PARENTHESES IN CONDITIONS
+────────────────────────────────────────────────────────────────────────────────
+The parser requires explicit grouping of boolean expressions.
+
+    WRONG:   when age > 3 AND neighbors < 6 OR auxin > 0.5
+    RIGHT:   when ((age > 3) AND (neighbors < 6)) OR (auxin > 0.5)
+
+────────────────────────────────────────────────────────────────────────────────
+TIP GROWTH (growing filament)
+────────────────────────────────────────────────────────────────────────────────
+    tip -> tip, body:
+      when NOT blocked(facing)
+      axis = facing
+      limit = 20
+
+────────────────────────────────────────────────────────────────────────────────
+BRANCHING
+────────────────────────────────────────────────────────────────────────────────
+    stem -> branch, stem:
+      when (age >= 4) AND (hormone* < 0.2)
+      axis = facing±90
+      emit hormone scale=0.4
+
+────────────────────────────────────────────────────────────────────────────────
+PHOTOTROPISM (bending toward light)
+────────────────────────────────────────────────────────────────────────────────
+    shoot -> shoot, shoot:
+      when NOT blocked(facing)
+      axis = facing@light+20
+
+────────────────────────────────────────────────────────────────────────────────
+CIRCULAR/RING GROWTH
+────────────────────────────────────────────────────────────────────────────────
+    cell -> cell, cell:
+      axis = @center+90      # perpendicular to radial gradient
+
+────────────────────────────────────────────────────────────────────────────────
+STOCHASTIC DIFFERENTIATION
+────────────────────────────────────────────────────────────────────────────────
+    DIFFERENTIATE:
+      green -> blue:
+        when (age >= 3) AND Random(1 - center)   # more likely far from center
+
+────────────────────────────────────────────────────────────────────────────────
+AVOIDING RUNAWAY GROWTH
+────────────────────────────────────────────────────────────────────────────────
+Always include at least one of:
+    • limit = N
+    • when neighbors < N
+    • when NOT surrounded
+    • when (some gradient condition)
+
+────────────────────────────────────────────────────────────────────────────────
+MICRO-GRADIENT SPACING
+────────────────────────────────────────────────────────────────────────────────
+To space out events (like branches), emit a gradient and check for low values:
+
+    stem -> branch, stem:
+      when (hormone* < 0.15) AND (age >= 4)
+      emit hormone scale=0.35
+
+The emitted gradients persist and accumulate, creating exclusion zones.
+
+────────────────────────────────────────────────────────────────────────────────
+REMEMBER
+────────────────────────────────────────────────────────────────────────────────
+• Age resets to 0 on division; age=1 on first rule evaluation
+• Differentiation preserves age (unless reset_age = true)
+• Division limit checks division_count (generations from origin)
+• Emitted gradients are permanent and don't move
+• All decisions are made on tissue state at START of step
+
+
+================================================================================
+QUICK REFERENCE CARD
+================================================================================
+
+GRADIENTS:
+  name: r-|r+|l|l-|l+ [angle=N] [scale=N]
+
+CELLS:
+  name: #RRGGBB [initial]
+
+DIVIDE:
+  parent -> daughter1, daughter2:
+    when (CONDITION)
+    axis = N | random | @grad[±N] | facing[±N] | facing@grad+N
+    emit name [scale=N]
+    priority = N
+    limit = N
+
+DIFFERENTIATE:
+  source -> target:
+    when (CONDITION)
+    priority = N
+    reset_age = true|false
+    reset_divisions = true|false
+
+DIE:
+  celltype:
+    when (CONDITION)
+    priority = N
+
+CONDITIONS:
+  age|neighbors|neighbors(type)|gradient|gradient* OP value
+  surrounded | blocked(gradient|facing)
+  Random | Random(value) | Random(expression)
+  (cond) AND|OR (cond) | NOT (cond)
+
+================================================================================

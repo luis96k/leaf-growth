@@ -1,0 +1,81 @@
+# ==============================================================================
+#  Random Condition Demo
+#
+#  Demonstrates the three ways to use probabilistic conditions:
+#
+#    Random              → 50/50 coin flip every evaluation
+#    Random(gradient)    → P(True) = gradient value at this cell
+#    Random(1 - grad)    → P(True) = complement of gradient
+#    Random((a + b) / 2) → any arithmetic on gradients/constants
+#
+#  Visual outcome: a dense green core (division favored near origin),
+#  a stochastic blue halo around it (differentiation favored far from
+#  origin), roughly half the halo turning red over time (coin flip),
+#  and rare gold mutants mostly near the center (arithmetic blend).
+# ==============================================================================
+
+GRADIENTS:
+  center: r- scale=0.18        # 1.0 at origin, decays outward
+
+CELLS:
+  seed:   #ffffff initial
+  green:  #33cc55
+  blue:   #3388ff
+  red:    #ee4444
+  gold:   #ffcc22
+
+
+DIVIDE:
+
+  seed -> green, green:
+    axis = random
+    limit = 1
+
+  # ──────────────────────────────────────────────────────────────
+  # Random(gradient)
+  #   center ≈ 1.0 near origin  → divides almost every step
+  #   center ≈ 0.1 at the edge  → divides ~1 step in 10
+  # Result: growth slows naturally as the colony spreads out.
+  # ──────────────────────────────────────────────────────────────
+  green -> green, green:
+    when Random(center) AND neighbors < 7
+    axis = random
+    limit = 12
+
+
+DIFFERENTIATE:
+
+  # ──────────────────────────────────────────────────────────────
+  # Random(1 - gradient)
+  #   Near origin: 1 - center ≈ 0 → almost never turns blue
+  #   Far out:     1 - center ≈ 1 → turns blue almost immediately
+  # Result: a soft stochastic boundary instead of a hard threshold.
+  # ──────────────────────────────────────────────────────────────
+  green -> blue:
+    when age >= 3 AND Random(1 - center)
+    priority = 5
+
+  # ──────────────────────────────────────────────────────────────
+  # Random (no argument) — fair coin flip, p = 0.5
+  #   Each eligible blue cell has a 50% chance per step to go red.
+  #   After ~4 steps of eligibility, ~94% will have flipped.
+  # ──────────────────────────────────────────────────────────────
+  blue -> red:
+    when age >= 3 AND Random
+
+  # ──────────────────────────────────────────────────────────────
+  # Random(arithmetic expression)
+  #   (center + 0.05) / 4  ranges from ~0.26 near origin
+  #                        down  to ~0.01 at the edge.
+  #   Gold mutants appear rarely, biased toward the center.
+  # ──────────────────────────────────────────────────────────────
+  red -> gold:
+    when age >= 2 AND Random((center + 0.05) / 4)
+
+
+DIE:
+  # Clean up isolated stragglers so the shape stays readable
+  blue:
+    when neighbors == 0 AND age > 15
+  red:
+    when neighbors == 0 AND age > 15
