@@ -1,0 +1,193 @@
+# ==============================================================================
+#  leaf.gro  v3 - Leaf Growth Model with Filler Cells (No Leaves)
+# ==============================================================================
+
+GRADIENTS:
+  root:    r- scale=0.05
+  outward: r+ scale=0.05
+  floor:   l  angle=270 scale=0.25
+
+CELLS:
+  seed:     #ffee66 initial
+  base:     #443322
+  apex:     #44ee44
+  stem:     #228844
+  branch_l: #66cc66
+  branch_r: #44bb44
+  wood:     #558855
+  wood_old: #445544
+  twig_l:   #88ccaa
+  twig_r:   #66bbaa
+  filler:   #ccdd66
+  phantom:  #445544
+
+
+DIVIDE:
+
+  # ── 1. GERMINATION ─────────────────────────────────────────────
+  seed -> base, apex:
+    axis = facing+180
+    limit = 1
+
+  # ── 2. MAIN VEIN GROWTH ────────────────────────────────────────
+  apex -> apex, stem:
+    when (root > 0.04 AND NOT blocked(facing)) AND floor < 0.35
+    axis = facing±2
+    limit = 65
+
+  # ── 3. APEX TERMINATION ────────────────────────────────────────
+  #  Apex becomes wood_old + phantom (phantom dies, no duplication)
+  # ───────────────────────────────────────────────────────────────
+  apex -> wood_old, phantom:
+    when age >= 6
+    axis = facing
+    priority = 10
+
+  # ── 4. LEFT BRANCH INITIATION ──────────────────────────────────
+  stem -> branch_l, stem:
+    when (age >= 3 AND hormone_l* < 0.12) AND ((root < 0.61 AND root > 0.04) AND (neighbors <= 3 AND floor < 0.35))
+    axis = facing-90
+    emit hormone_l scale=0.22
+    priority = 5
+
+  # ── 5. RIGHT BRANCH INITIATION ─────────────────────────────────
+  stem -> branch_r, stem:
+    when (age >= 3 AND hormone_r* < 0.12) AND ((root < 0.61 AND root > 0.04) AND (neighbors <= 3 AND floor < 0.35))
+    axis = facing+90
+    emit hormone_r scale=0.28
+    priority = 5
+
+  # ── 6. STEM MATURATION ─────────────────────────────────────────
+  #  Old stem cells that haven't branched become wood_old.
+  #  Uses phantom to avoid duplication.
+  # ───────────────────────────────────────────────────────────────
+  stem -> wood_old, phantom:
+    when age >= 25
+    axis = facing
+    priority = 2
+
+  # ── 7. LEFT BRANCH GROWTH ──────────────────────────────────────
+  branch_l -> branch_l, wood:
+    when (root > 0.04 AND NOT blocked(facing)) AND (neighbors <= 3 AND floor < 0.40)
+    axis = facing@outward+3
+
+  # ── 8. RIGHT BRANCH GROWTH ─────────────────────────────────────
+  branch_r -> branch_r, wood:
+    when (root > 0.04 AND NOT blocked(facing)) AND (neighbors <= 3 AND floor < 0.40)
+    axis = facing@outward+3
+
+  # ── 9. LEFT BRANCH TERMINATION ─────────────────────────────────
+  branch_l -> wood_old, phantom:
+    when age >= 5
+    axis = facing
+    priority = 10
+
+  # ── 10. RIGHT BRANCH TERMINATION ───────────────────────────────
+  branch_r -> wood_old, phantom:
+    when age >= 5
+    axis = facing
+    priority = 10
+
+  # ── 11. LEFT TWIG INITIATION ───────────────────────────────────
+  wood -> twig_l, wood:
+    when ((age >= 5 AND twighorm_l* < 0.20) AND (hormone_l* < 0.20 AND hormone_r* < 0.20)) AND (root > 0.04 AND (neighbors <= 3 AND floor < 0.40))
+    axis = facing-90
+    emit twighorm_l scale=0.23
+    priority = 5
+
+  # ── 12. RIGHT TWIG INITIATION ──────────────────────────────────
+  wood -> twig_r, wood:
+    when ((age >= 5 AND twighorm_r* < 0.20) AND (hormone_l* < 0.20 AND hormone_r* < 0.20)) AND (root > 0.04 AND (neighbors <= 3 AND floor < 0.40))
+    axis = facing+90
+    emit twighorm_r scale=0.27
+    priority = 5
+
+  # ── 13. LEFT TWIG GROWTH ───────────────────────────────────────
+  twig_l -> twig_l, wood:
+    when (root > 0.04 AND NOT blocked(facing)) AND (neighbors <= 3 AND floor < 0.45)
+    axis = facing@outward+8
+
+  # ── 14. RIGHT TWIG GROWTH ──────────────────────────────────────
+  twig_r -> twig_r, wood:
+    when (root > 0.04 AND NOT blocked(facing)) AND (neighbors <= 3 AND floor < 0.45)
+    axis = facing@outward+8
+
+  # ── 15. LEFT TWIG TERMINATION ──────────────────────────────────
+  twig_l -> wood_old, phantom:
+    when age >= 5
+    axis = facing
+    priority = 10
+
+  # ── 16. RIGHT TWIG TERMINATION ─────────────────────────────────
+  twig_r -> wood_old, phantom:
+    when age >= 5
+    axis = facing
+    priority = 10
+
+  # ── 17. WOOD PRODUCES FILLER ───────────────────────────────────
+  #  Much later (age >= 40) so structure fully develops first.
+  #  Filler pushed outward into open space.
+  # ───────────────────────────────────────────────────────────────
+  wood -> filler, wood_old:
+    when (age >= 40 AND NOT blocked(outward)) AND neighbors <= 4
+    axis = @outward
+    priority = 3
+
+  # ── 18. WOOD MATURES WITHOUT FILLER ────────────────────────────
+  #  If blocked or crowded, just convert to wood_old.
+  #  Uses phantom to avoid duplication.
+  # ───────────────────────────────────────────────────────────────
+  wood -> wood_old, phantom:
+    when age >= 40
+    axis = facing
+    priority = 2
+
+  # ── 19. FILLER EXPANSION ───────────────────────────────────────
+  filler -> filler, filler:
+    when (NOT blocked(outward) AND neighbors < 5) AND (floor < 0.45 AND root > 0.04)
+    axis = random
+    priority = 1
+
+
+DIE:
+  # ── PHANTOM CELLS DIE IMMEDIATELY ──────────────────────────────
+  #  This is the key trick: phantom exists for one step then
+  #  vanishes, allowing us to "convert" cells without duplication.
+  # ───────────────────────────────────────────────────────────────
+  phantom:
+    when age >= 1
+
+
+# ==============================================================================
+#  TUNING REFERENCE  v3
+#
+#  PHANTOM CELL TECHNIQUE
+#    Problem: Division always creates TWO daughters.
+#    Solution: Use "parent -> real_type, phantom" where phantom
+#    dies at age >= 1. Effect: parent "converts" to real_type.
+#    phantom color matches wood_old so it's invisible during
+#    its one-step existence.
+#
+#  MATURATION TIMELINE
+#    - Branches/twigs terminate at age >= 5 → wood_old
+#    - Stem matures at age >= 25 → wood_old  
+#    - Wood produces filler at age >= 40 → filler + wood_old
+#    This staging ensures:
+#      1. Structure grows fully (steps 0-30)
+#      2. Tips convert to wood_old (ongoing)
+#      3. Stem becomes wood_old (step ~25+)
+#      4. Filler appears last (step ~40+)
+#
+#  NO MORE LEAVES
+#    All tip terminations now produce wood_old + phantom
+#    instead of leaf + leaf. Cleaner final structure.
+#
+#  FILLER COLOR
+#    #ccdd66 = bright yellow-green (was #aaddcc blue-green)
+#
+#  FINAL STATE
+#    After full development, tissue contains only:
+#      - base (anchor point)
+#      - wood_old (all structural cells)
+#      - filler (space-filling cells)
+# ==============================================================================
